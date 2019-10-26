@@ -1,0 +1,530 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+### TP 1: Analisis exploratorio e Introduccion a Regresión lineal
+
+ 
+
+```{r,eval=FALSE}
+library(tidyverse)
+library(pander)
+library(data.table)
+```
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(GGally)
+library(corrr)
+library(knitr)
+library(kableExtra)
+options(knitr.table.format = "html")
+
+library(ggplot2)
+library(ggthemes)  # estilos de gráficos
+library(ggrepel)   # etiquetas de texto más prolijas que las de ggplot
+library(scales)    # tiene la función 'percent()'
+library(modelr)
+library(plotly)
+options(na.action = na.warn)
+
+```
+
+
+ 1) Preparacion de los datos
+    a) Leer el archivo y mostrar su estructura
+    
+
+```{r}
+
+datos = data.table::fread("C:/Users/susan/Downloads/AUBADM_EEA/EEA2019/trabajos_practicos/TP-1/ar_properties.csv")
+
+```
+```{r}
+glimpse(datos)
+```
+
+
+  b) Quedarse con aquellos registros que:
+       i) Pertenecen a Argentina y Capital Federal
+        ii) Cuyo precio esta en dolares (USD)
+        iii) El tipo de propiedad sea: Departamento, PH o Casa
+        iv) El tipo de operacion sea Venta
+
+ c) Seleccionar las variables **id**, **l3**, **rooms**, **bedrooms**, **bathrooms**, **surface_total**, **surface_covered**, **price** y **property_type**
+ 
+ La cantidad de filas ahora coincide con las esperadas 61905, y 9 variables:
+ 
+ id: id del aviso (variable tipo char)
+ 
+ l3: barrio de Capital Federal donde está ubicada la propiedad (variable tipo char)
+ 
+ rooms, bedrooms, bathrooms: cantidad de habitaciones, dormitorios y baños respectivamente (variables numericas)
+ 
+ surface_total, surface_covered: superficie cubierta y total (variables numericas)
+ 
+ Price: precio (variable numerica)
+ 
+ property_type: tipo de propiedad (variable tipo char)
+ 
+ 
+```{r}
+datos_sel <- datos %>% 
+  filter(l1=='Argentina' ,
+           l2=='Capital Federal', currency=='USD' ,
+           property_type %in% c('Departamento','Casa','PH') ,
+          operation_type=='Venta'  ) %>%
+  select(id, l3, rooms, bedrooms, bathrooms, surface_total, surface_covered,price,property_type)
+
+nrow(datos_sel)
+
+```
+
+
+
+2) Analisis exploratorios (I)
+    a) Obtener la cantidad de valores unicos y de valores faltantes (NAs) para cada una de estas variables
+ 
+#  Valores Unicos
+ Con summarise_all(n_distinct) obtengo la cantidad de valores distintos en cada columna.
+ 
+ Se destaca lo siguiente:
+ 
+ id tiene tantos  valores distintos como cantidad de filas del dataset, dado que es la variable identificación
+ 
+ property_type muestra 3, que fueron los valores seleccionados 
+ 
+
+```{r}
+
+unique_values <- datos_sel %>% 
+  summarise_all(n_distinct) %>% 
+  t() %>% 
+  as.data.frame()
+
+colnames(unique_values) <- c("Cantidad Valores únicos")
+
+unique_values  %>% kable() %>%
+  kable_styling(position = "left", full_width = F)
+
+
+```
+
+# Valores Faltantes
+
+ Con map y ~sum(is.na(.)) obtengo los valores NA para todas las columnas. Y calculo el porcentaje respecto del total del dataset
+ 
+ Se advierte que efectivamente **bedrooms**  tiene muchos valores NA (41% respecto del total)
+ 
+ id,price y property_type no tienen valores NA
+
+
+
+```{r}
+
+na_values <- purrr::map(datos_sel, ~sum(is.na(.)))   %>% unlist()
+
+nadf_values <-as.data.frame(na_values)
+nadf_values$porcentaje <- round(nadf_values$na_values/nrow(datos_sel)*100,1)
+
+nadf_values %>% kable() %>%
+  kable_styling(position = "left", full_width = F)
+
+```
+   
+   b) Obtener la matriz de correlacion para las variables numericas. Pista: usen 'complete.obs' para poder omitir los valores faltantes.
+   
+   Hice de dos maneras: primero con cor usando 'complete.obs', y luego con correlate
+   
+   Se destaca:
+   alta correlación de **bedrooms** con **rooms**, valor positivo 0.92 lo que significa que cuando una aumenta la otra aumenta también
+   
+   practicamente nada de correlación entre price y las variables surface, valor casi 0
+   
+   mediano grado de correlación  de bathrooms con rooms y con bedrooms, valor 0.63
+   
+   correlación un poco mayor entre surface_covered y surface_total, valor 0.69
+   
+   
+   
+```{r}
+# de una forma
+datos_sel_numeric <- datos_sel %>% select(-c(id,l3, property_type))
+crm <- cor(datos_sel_numeric, use="complete.obs", method="pearson")
+
+crm
+
+# de otra forma
+datos_sel_numeric %>% 
+ correlate() %>% 
+  shave() %>% 
+  fashion()
+```
+
+
+3) Preparacion de los datos (II)
+    a) En el punto 2 deberian haber encontrado que la variable **bedrooms** presenta una alta proporción de valores faltantes y que presenta una fuerte correlacion con la variable **rooms**. Por lo tanto, vamos a eliminarla.
+    b) Eliminar todos los registros que presentan valores faltantes
+  
+Luego de eliminar la variable bedrooms y todos los registros que presentan valores NA obtengo la cantidad esperada de 51210 observaciones y 8 variables
+
+
+
+```{r}
+datos_sel2 <- datos_sel  %>% select(-c(bedrooms))
+datos_sel2 <- na.omit(datos_sel2)
+nrow(datos_sel2)
+```
+ 
+ 
+  4) Analisis exploratorios (II)
+    a) Obtener estadisticas descriptivas para la variable precio (cuartiles, promedio, minimo y maximo) y realizar un histograma de la variable
+   
+  
+   El 75% de las propiedades tiene precio <= 270000 USD
+   
+   Hay un precio mínimo de 6000 USD y un máximo de 6000000 USD
+   
+```{r}
+
+mistads <- function(x){
+                m <- mean(x)
+                q <- quantile(x)
+                n <- length(x)
+                mi <- min(x)
+                ma <- max(x)
+                return(c(n=n, cuartiles=q, media=m, minimo=mi, maximo=ma))
+}
+
+resultados <- mistads(datos_sel2$price)
+
+resultados  %>%
+  kable(col.names = "Precio(USD)",digits=0) %>%
+  kable_styling(position = "left", full_width = F)
+
+
+```
+
+Histograma de variable Precio
+
+Se nota una cola de valores grandes pero son pocos respecto del total
+
+
+```{r}
+ggplot(data = datos_sel2, aes(x = price, col="blue"))+
+  geom_histogram(binwidth = 100000 )+
+  labs(title = "Histograma de Precio")+
+  theme(legend.position = 'none')
+
+```
+ 
+ 
+  4b) Obtener estadisticas descriptivas para la variable precio (cuartiles, promedio, minimo y maximo) por cada tipo de propiedad. 
+  
+  De las estadísticas se advierte, que la mayoría de las propiedades son departamentos, 44268 lo que representa el 71% del total de propiedades
+  
+  
+```{r}
+
+mistads2 <- function(x){
+xx <-  datos_sel2[datos_sel2$property_type== x,c("price")]
+  
+                m <- round(mean(xx),2)
+                q <- quantile(xx)
+                n <- length(xx)
+                mi <- min(xx)
+                ma <- max(xx)
+                return(c(n=n, cuartiles=q, media=m, minimo=mi, maximo=ma))
+}
+
+
+lista_tipos_prop <- unique( datos_sel2$property_type)
+bases_df <- data.frame()
+bases_df <- tibble(lista_tipos_prop) %>%
+  mutate(resultado = purrr::map(lista_tipos_prop, mistads2))
+
+
+bases_df  %>% 
+  kable(digits=0) %>%
+  kable_styling(position = "left", full_width = F)
+
+```
+
+
+```{r}
+```
+    
+    c) Realizar un grafico de boxplot de la variable precio por tipo de propiedad
+  
+  Se nota en promedio las casas son mas caras que los demás y tienen más varianza. El precio de los departamentos es parecido  a los PH, aunque con más valores fuera del rango intercuartil.
+  
+```{r}
+ggplot(data = datos_sel2, aes(x= property_type,y = price, group= property_type, fill= property_type))+
+  geom_boxplot()+
+  labs(title = "Boxplot de Precio por Tipo de Propiedad")+
+  theme(legend.position = 'none')+
+  scale_y_continuous(limits = c(0, 6000000))
+
+```
+
+    d) Realizar un correlagrama usando `GGAlly`
+    
+    Se nota alta  correlación positiva de:
+    
+    surface_total con surface_covered, 
+    
+    price con bathrooms y rooms, 
+    
+    rooms con bathrooms
+    
+```{r}
+
+ggcorr(datos_sel2, layout.exp = 2) + labs(title='Correlograma variables cuantitativas')
+
+
+```
+ 
+   
+   
+5) Outliers
+    a) Eliminar los outliers de la variable **precio** con algún criterio que elijan: puede ser por valores de corte, eliminar el x% a izquierda y derecha,etc.
+    
+    Elijo calcular una variable nueva **precio_por_metro** para ayudarme a identificar propiedades que tengan valores incorrectos y que puedan ser outliers candidatos a eliminar. Es real que hay propiedades caras porque son muy grandes o por la categoría. Pero dentro de lo que conocemos en Capital,los valores lógicos llegan hasta un cierto valor. Lo mismo en el extremo inferior, no hay propiedades que valgan menos que cierto valor por metro cuadrado.
+    
+    Para observar, hago un histograma de los que tienen precio_por_metro superior a 7000 y otro para inferior a 400
+  
+```{r}
+# calculo variable precio_por_metro
+
+datos_sel3 <- datos_sel2 %>% mutate( price_por_metro = price / surface_total)
+
+# me fijo cuántos tienen valores extremos 
+ggplot(data = datos_sel3[datos_sel3$price_por_metro> 7000,], aes(x = price_por_metro, col="blue"))+
+  geom_histogram(binwidth = 1000 )+
+  labs(title = "Histograma de Precio Por metro > 7000")+
+  theme(legend.position = 'none')
+
+ggplot(data = datos_sel3[datos_sel3$price_por_metro< 400,], aes(x = price_por_metro, col="blue"))+
+  geom_histogram(binwidth = 10 )+
+  labs(title = "Histograma de Precio Por metro <400")+
+  theme(legend.position = 'none')
+
+
+```
+
+Finalmente, marco como outliers los que tienen precio_por_metro < 400 o precio_por_metro > 7000 o precio < 30000. Esto última condición la agrego considerando que es poco factible una propiedad con precio tan bajo, y que puede ser error de datos.
+
+La cantidad de outliers que seleccioné resulta 522, el 1% aproximadamente del dataset
+
+
+```{r}
+datos_sel3$outlier <- (datos_sel3$price_por_metro < 300 | datos_sel3$price <30000 | datos_sel3$price_por_metro >  7000)
+
+
+datos_sel3 %>%   group_by(outlier) %>% summarise(n()) 
+
+```
+
+
+
+
+6) Analisis exploratorios (III)
+   Repetir los 4 análisis exploratorios realizados en el punto 4 y realizar unos breves comentarios sobre los cambios que encontraron
+
+ a) Obtener estadisticas descriptivas para la variable precio (cuartiles, promedio, minimo y maximo) y realizar un histograma de la variable
+
+### Me quedo con los que no marqué como outlier.
+
+Al remover outliers bajó un poco el valor del precio promedio.
+
+```{r}
+
+
+datos_sel4 <- datos_sel3 %>% filter(!outlier)
+
+mistads <- function(x){
+                m <- mean(x)
+                q <- quantile(x)
+                n <- length(x)
+                mi <- min(x)
+                ma <- max(x)
+                return(c(n=n, cuartiles=q, media=m, minimo=mi, maximo=ma))
+}
+
+resultados <- mistads(datos_sel4$price)
+
+resultados  %>%
+  kable(col.names = "Precio USD",digits=0) %>%
+  kable_styling(position = "left", full_width = F)
+
+```
+
+Histograma de variable Precio
+
+Observo que no varió mucho el histograma, ya que no fue muy drástica la quita de outliers
+
+```{r}
+ggplot(data = datos_sel4, aes(x = price, col="blue"))+
+  geom_histogram(binwidth = 100000 )+
+  labs(title = "Histograma de Precio sin outliers")+
+  theme(legend.position = 'none')
+
+```
+
+
+6b) Obtener estadisticas descriptivas para la variable precio (cuartiles, promedio, minimo y maximo) por cada tipo de propiedad.
+
+Se mantienen parecidas a los valores obtenidos anteriormente
+
+```{r}
+
+mistads4 <- function(x){
+xx <-  datos_sel4[datos_sel4$property_type== x,c("price")]
+  
+                m <- round(mean(xx),2)
+                q <- quantile(xx)
+                n <- length(xx)
+                mi <- min(xx)
+                ma <- max(xx)
+                return(c(n=n, cuartiles=q, media=m, minimo=mi, maximo=ma))
+}
+
+
+lista_tipos_prop <- unique( datos_sel4$property_type)
+bases_df <- data.frame()
+bases_df <- tibble(lista_tipos_prop) %>%
+  mutate(resultado = purrr::map(lista_tipos_prop, mistads4))
+
+
+bases_df  %>% 
+  kable(digits=0) %>%
+  kable_styling(position = "left", full_width = F)
+
+```
+
+6c) Realizar boxplot de precio por  tipo de propiedad
+
+Se observa parecido al bloxplot anterior
+
+```{r}
+ggplot(data = datos_sel4, aes(x= property_type,y = price, group= property_type, fill= property_type))+
+  geom_boxplot()+
+  labs(title = "Boxplot de Precio por Tipo de Propiedad ( Sin Outliers) ")+
+  theme(legend.position = 'none')+
+  scale_y_continuous(limits = c(0, 6000000))
+```
+
+6d) Realizar correlagrama usando Ggally
+
+Ahora aparece alta correlación positiva de precio con superficie, sobre todo con surface_total, que antes no existía. Y en general, alta correlación entre todas las variables.
+
+
+```{r}
+datos_sel4_aux <- datos_sel4 %>% select(-price_por_metro)
+ggcorr(datos_sel4_aux, layout.exp = 2) + labs(title='Correlograma variables cuantitativas')
+
+
+
+```
+
+
+
+7) Realizar modelo de regresion lineal que explique el precio en funcion de las rooms y otro en funcion de la superficie total
+
+Grafico precio en función de rooms, y precio en función de surface_total
+
+```{r}
+
+ggplot(datos_sel4, aes(rooms, price) ) + 
+  geom_point()
+
+ggplot(datos_sel4, aes(surface_total, price) ) + 
+  geom_point()
+
+```
+
+Hago los modelos y muestro los coeficientes
+
+```{r}
+
+rooms_mod <- lm(price ~ rooms, data = datos_sel4)
+coef(rooms_mod)
+    
+surface_mod <- lm(price ~ surface_total, data = datos_sel4)
+coef(surface_mod)
+
+    
+```
+
+### Interpretación de los parametros
+
+- Modelo Precio en función de rooms
+
+$$Precio = -30873.38 +   96812.34 * rooms$$
+
+
+ -30873.38 : es la ordenada al origen, representa el valor de una propiedad con 0 habitaciones, lo cual no tiene sentido en este dataset
+ 
+  96812.34 : es la pendiente de la recta. Indica cuánto aumenta la variable precio por cada unidad que aumenta la variable rooms
+  
+  
+- Modelo Precio en función de Surface_total  
+
+$$Precio = 43770.29  + 2161.451 * surface\_total$$
+
+
+ 43770,29 : es la ordenada al origen, representa el valor de una propiedad con 0 metros. En este caso se puede interpretar  como un precio base del cual arranca el precio de cualquier propiedad
+ 
+ 2161,451 : es la pendiente de la recta. Indica cuánto aumenta la variable precio por cada  metro que aumenta la variable surface_total
+ 
+
+Ahora obtengo  el summary de cada modelo 
+
+```{r}
+summary(rooms_mod)
+
+summary(surface_mod)
+```
+
+Grafico los puntos, y la recta del modelo
+
+```{r}
+##rooms
+ggplot(datos_sel4, aes(rooms, price)) + 
+   geom_abline(intercept = -30873.38, slope = 96812.34, colour = "#3366FF") +
+  geom_point(colour = "grey40") 
+  
+  
+
+ggplot(datos_sel4, aes(surface_total, price)) + 
+   geom_abline(intercept = 43770.29 , slope =  2161.451 , colour = "#3366FF") +
+  geom_point(colour = "grey40") 
+
+
+```
+
+
+### Conclusiones
+
+Dado que los p-valores son muy chicos, ambos modelos son estadisticamente significativos.
+
+El modelo que elegiría es el de precio en función de la superficie, porque tiene menor Residual standard error (166500) y mayor R-squared (52%), lo que significa que tiene menos residuos y que la variabilidad observada del precio está mejor explicada en función de la surface_total que en función de la cantidad de habitaciones.
+
+
+
+
+
+
+
+```{r}
+
+```
+
+    

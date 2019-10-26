@@ -1,0 +1,74 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+### TP 1: Analisis exploratorio e Introduccion a Regresión lineal
+. 
+ 
+
+```{r,eval=FALSE}
+library(tidyverse)
+library(pander)
+```
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(GGally)
+library(corrr)
+library(knitr)
+library(kableExtra)
+options(knitr.table.format = "html")
+
+library(ggplot2)
+library(ggthemes)  # estilos de gráficos
+library(ggrepel)   # etiquetas de texto más prolijas que las de ggplot
+library(scales)    # tiene la función 'percent()'
+library(modelr)
+library(plotly)
+options(na.action = na.warn)
+
+```
+
+
+ 1) Preparacion de los datos
+    a) Leer el archivo y mostrar su estructura
+ 
+```{r}
+
+datos <- read.table("trabajos_practicos/TP-1/ar_properties.csv",
+                              sep=",", dec=".", header = TRUE, fill = TRUE, quote = "\"" 
+                 )
+
+```
+```{r}
+glimpse(datos)
+```
+
+
+   b) Quedarse con aquellos registros que:
+        i) Pertenecen a Argentina y Capital Federal
+        ii) Cuyo precio esta en dolares (USD)
+        iii) El tipo de propiedad sea: Departamento, PH o Casa
+        iv) El tipo de operacion sea Venta
+        
+   c) Seleccionar las variables *id*, **l3**, **rooms**, **bedrooms**, **bathrooms**, **surface_total**, **surface_covered**, **price** y **property_type**
+ 
+```{r}
+datos_sel <- datos %>% 
+  filter(l1=="Argentina" & l2=="Capital Federal"  & currency=="USD" &
+          (property_type=="Departamento" |property_type=="Casa" | property_type=="PH")  & 
+          operation_type=="Venta"  ) %>%
+  select(id, l3, rooms, bedrooms, bathrooms, surface_total, surface_covered,price,property_type)
+
+nrow(datos_sel)
+
+```
+###############################
+
